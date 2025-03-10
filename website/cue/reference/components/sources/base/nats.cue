@@ -160,6 +160,11 @@ base: components: sources: nats: configuration: {
 															[gelf]: https://docs.graylog.org/docs/gelf
 															[implementation]: https://github.com/Graylog2/go-gelf/blob/v2/gelf/reader.go
 															"""
+						influxdb: """
+															Decodes the raw bytes as an [Influxdb Line Protocol][influxdb] message.
+
+															[influxdb]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
+															"""
 						json: """
 															Decodes the raw bytes as [JSON][json].
 
@@ -219,6 +224,22 @@ base: components: sources: nats: configuration: {
 					type: bool: default: true
 				}
 			}
+			influxdb: {
+				description:   "Influxdb-specific decoding options."
+				relevant_when: "codec = \"influxdb\""
+				required:      false
+				type: object: options: lossy: {
+					description: """
+						Determines whether or not to replace invalid UTF-8 sequences instead of failing.
+
+						When true, invalid UTF-8 sequences are replaced with the [`U+FFFD REPLACEMENT CHARACTER`][U+FFFD].
+
+						[U+FFFD]: https://en.wikipedia.org/wiki/Specials_(Unicode_block)#Replacement_character
+						"""
+					required: false
+					type: bool: default: true
+				}
+			}
 			json: {
 				description:   "JSON-specific decoding options."
 				relevant_when: "codec = \"json\""
@@ -257,14 +278,23 @@ base: components: sources: nats: configuration: {
 				required:      false
 				type: object: options: {
 					desc_file: {
-						description: "Path to desc file"
-						required:    false
+						description: """
+																The path to the protobuf descriptor set file.
+
+																This file is the output of `protoc -I <include path> -o <desc output path> <proto>`
+
+																You can read more [here](https://buf.build/docs/reference/images/#how-buf-images-work).
+																"""
+						required: false
 						type: string: default: ""
 					}
 					message_type: {
-						description: "message type. e.g package.message"
+						description: "The name of the message type to use for serializing."
 						required:    false
-						type: string: default: ""
+						type: string: {
+							default: ""
+							examples: ["package.Message"]
+						}
 					}
 				}
 			}
@@ -335,7 +365,7 @@ base: components: sources: nats: configuration: {
 					delimiter: {
 						description: "The character that delimits byte sequences."
 						required:    true
-						type: uint: {}
+						type: ascii_char: {}
 					}
 					max_length: {
 						description: """
@@ -353,6 +383,59 @@ base: components: sources: nats: configuration: {
 																"""
 						required: false
 						type: uint: {}
+					}
+				}
+			}
+			chunked_gelf: {
+				description:   "Options for the chunked GELF decoder."
+				relevant_when: "method = \"chunked_gelf\""
+				required:      false
+				type: object: options: {
+					decompression: {
+						description: "Decompression configuration for GELF messages."
+						required:    false
+						type: string: {
+							default: "Auto"
+							enum: {
+								Auto: "Automatically detect the decompression method based on the magic bytes of the message."
+								Gzip: "Use Gzip decompression."
+								None: "Do not decompress the message."
+								Zlib: "Use Zlib decompression."
+							}
+						}
+					}
+					max_length: {
+						description: """
+																The maximum length of a single GELF message, in bytes. Messages longer than this length will
+																be dropped. If this option is not set, the decoder does not limit the length of messages and
+																the per-message memory is unbounded.
+
+																Note that a message can be composed of multiple chunks and this limit is applied to the whole
+																message, not to individual chunks.
+
+																This limit takes only into account the message's payload and the GELF header bytes are excluded from the calculation.
+																The message's payload is the concatenation of all the chunks' payloads.
+																"""
+						required: false
+						type: uint: {}
+					}
+					pending_messages_limit: {
+						description: """
+																The maximum number of pending incomplete messages. If this limit is reached, the decoder starts
+																dropping chunks of new messages, ensuring the memory usage of the decoder's state is bounded.
+																If this option is not set, the decoder does not limit the number of pending messages and the memory usage
+																of its messages buffer can grow unbounded. This matches Graylog Server's behavior.
+																"""
+						required: false
+						type: uint: {}
+					}
+					timeout_secs: {
+						description: """
+																The timeout, in seconds, for a message to be fully received. If the timeout is reached, the
+																decoder drops all the received chunks of the timed out message.
+																"""
+						required: false
+						type: float: default: 5.0
 					}
 				}
 			}
@@ -391,8 +474,13 @@ base: components: sources: nats: configuration: {
 					enum: {
 						bytes:               "Byte frames are passed through as-is according to the underlying I/O boundaries (for example, split between messages or stream segments)."
 						character_delimited: "Byte frames which are delimited by a chosen character."
-						length_delimited:    "Byte frames which are prefixed by an unsigned big-endian 32-bit integer indicating the length."
-						newline_delimited:   "Byte frames which are delimited by a newline character."
+						chunked_gelf: """
+															Byte frames which are chunked GELF messages.
+
+															[chunked_gelf]: https://go2docs.graylog.org/current/getting_in_log_data/gelf.html
+															"""
+						length_delimited:  "Byte frames which are prefixed by an unsigned big-endian 32-bit integer indicating the length."
+						newline_delimited: "Byte frames which are delimited by a newline character."
 						octet_counting: """
 															Byte frames according to the [octet counting][octet_counting] format.
 
@@ -466,7 +554,7 @@ base: components: sources: nats: configuration: {
 			[async_nats_subscription_capacity]: https://docs.rs/async-nats/latest/async_nats/struct.ConnectOptions.html#method.subscription_capacity
 			"""
 		required: false
-		type: uint: default: 4096
+		type: uint: default: 65536
 	}
 	tls: {
 		description: "Configures the TLS options for incoming/outgoing connections."
@@ -476,7 +564,7 @@ base: components: sources: nats: configuration: {
 				description: """
 					Sets the list of supported ALPN protocols.
 
-					Declare the supported ALPN protocols, which are used during negotiation with peer. They are prioritized in the order
+					Declare the supported ALPN protocols, which are used during negotiation with a peer. They are prioritized in the order
 					that they are defined.
 					"""
 				required: false
@@ -498,7 +586,7 @@ base: components: sources: nats: configuration: {
 					The certificate must be in DER, PEM (X.509), or PKCS#12 format. Additionally, the certificate can be provided as
 					an inline string in PEM format.
 
-					If this is set, and is not a PKCS#12 archive, `key_file` must also be set.
+					If this is set _and_ is not a PKCS#12 archive, `key_file` must also be set.
 					"""
 				required: false
 				type: string: examples: ["/path/to/host_certificate.crt"]
@@ -531,6 +619,15 @@ base: components: sources: nats: configuration: {
 				required: false
 				type: string: examples: ["${KEY_PASS_ENV_VAR}", "PassWord1"]
 			}
+			server_name: {
+				description: """
+					Server name to use when using Server Name Indication (SNI).
+
+					Only relevant for outgoing connections.
+					"""
+				required: false
+				type: string: examples: ["www.example.com"]
+			}
 			verify_certificate: {
 				description: """
 					Enables certificate verification. For components that create a server, this requires that the
@@ -540,7 +637,7 @@ base: components: sources: nats: configuration: {
 					If enabled, certificates must not be expired and must be issued by a trusted
 					issuer. This verification operates in a hierarchical manner, checking that the leaf certificate (the
 					certificate presented by the client/server) is not only valid, but that the issuer of that certificate is also valid, and
-					so on until the verification process reaches a root certificate.
+					so on, until the verification process reaches a root certificate.
 
 					Do NOT set this to `false` unless you understand the risks of not verifying the validity of certificates.
 					"""
@@ -571,6 +668,6 @@ base: components: sources: nats: configuration: {
 			If the port is not specified it defaults to 4222.
 			"""
 		required: true
-		type: string: examples: ["nats://demo.nats.io", "nats://127.0.0.1:4242"]
+		type: string: examples: ["nats://demo.nats.io", "nats://127.0.0.1:4242", "nats://localhost:4222,nats://localhost:5222,nats://localhost:6222"]
 	}
 }

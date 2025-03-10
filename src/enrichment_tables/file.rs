@@ -14,7 +14,8 @@ use crate::config::EnrichmentTableConfig;
 #[configurable_component]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum Encoding {
+#[configurable(metadata(docs::enum_tag_description = "File encoding type."))]
+pub enum Encoding {
     /// Decodes the file as a [CSV][csv] (comma-separated values) file.
     ///
     /// [csv]: https://wikipedia.org/wiki/Comma-separated_values
@@ -46,24 +47,26 @@ impl Default for Encoding {
 /// File-specific settings.
 #[configurable_component]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct FileSettings {
+pub struct FileSettings {
     /// The path of the enrichment table file.
     ///
     /// Currently, only [CSV][csv] files are supported.
     ///
     /// [csv]: https://en.wikipedia.org/wiki/Comma-separated_values
-    path: PathBuf,
+    pub path: PathBuf,
 
+    /// File encoding configuration.
     #[configurable(derived)]
-    encoding: Encoding,
+    pub encoding: Encoding,
 }
 
 /// Configuration for the `file` enrichment table.
 #[configurable_component(enrichment_table("file"))]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FileConfig {
+    /// File-specific settings.
     #[configurable(derived)]
-    file: FileSettings,
+    pub file: FileSettings,
 
     /// Key/value pairs representing mapped log field names and types.
     ///
@@ -74,7 +77,7 @@ pub struct FileConfig {
     /// 1. One of the built-in-formats listed in the `Timestamp Formats` table below.
     /// 2. The [time format specifiers][chrono_fmt] from Rust’s `chrono` library.
     ///
-    /// ### Types
+    /// Types
     ///
     /// - **`bool`**
     /// - **`string`**
@@ -83,7 +86,7 @@ pub struct FileConfig {
     /// - **`date`**
     /// - **`timestamp`** (see the table below for formats)
     ///
-    /// ### Timestamp Formats
+    /// Timestamp Formats
     ///
     /// | Format               | Description                                                                      | Example                          |
     /// |----------------------|----------------------------------------------------------------------------------|----------------------------------|
@@ -109,7 +112,10 @@ pub struct FileConfig {
     /// [rfc3339]: https://tools.ietf.org/html/rfc3339
     /// [chrono_fmt]: https://docs.rs/chrono/latest/chrono/format/strftime/index.html#specifiers
     #[serde(default)]
-    schema: HashMap<String, String>,
+    #[configurable(metadata(
+        docs::additional_props_description = "Represents mapped log field names and types."
+    ))]
+    pub schema: HashMap<String, String>,
 }
 
 const fn default_delimiter() -> char {
@@ -178,10 +184,8 @@ impl FileConfig {
         })
     }
 
-    fn load_file(
-        &self,
-        timezone: TimeZone,
-    ) -> crate::Result<(Vec<String>, Vec<Vec<Value>>, SystemTime)> {
+    /// Load the configured file into memory. Required to create a new file enrichment table.
+    pub fn load_file(&self, timezone: TimeZone) -> crate::Result<FileData> {
         let Encoding::Csv {
             include_headers,
             delimiter,
@@ -192,6 +196,7 @@ impl FileConfig {
             .delimiter(delimiter as u8)
             .from_path(&self.file.path)?;
 
+        let first_row = reader.records().next();
         let headers = if include_headers {
             reader
                 .headers()?
@@ -201,14 +206,15 @@ impl FileConfig {
         } else {
             // If there are no headers in the datafile we make headers as the numerical index of
             // the column.
-            match reader.records().next() {
-                Some(Ok(row)) => (0..row.len()).map(|idx| idx.to_string()).collect(),
+            match first_row {
+                Some(Ok(ref row)) => (0..row.len()).map(|idx| idx.to_string()).collect(),
                 _ => Vec::new(),
             }
         };
 
-        let data = reader
-            .records()
+        let data = first_row
+            .into_iter()
+            .chain(reader.records())
             .map(|row| {
                 Ok(row?
                     .iter()
@@ -224,9 +230,13 @@ impl FileConfig {
             headers
         );
 
-        let modified = fs::metadata(&self.file.path)?.modified()?;
+        let file = reader.into_inner();
 
-        Ok((headers, data, modified))
+        Ok(FileData {
+            headers,
+            data,
+            modified: file.metadata()?.modified()?,
+        })
     }
 }
 
@@ -235,13 +245,24 @@ impl EnrichmentTableConfig for FileConfig {
         &self,
         globals: &crate::config::GlobalOptions,
     ) -> crate::Result<Box<dyn Table + Send + Sync>> {
-        let (headers, data, modified) = self.load_file(globals.timezone())?;
-
-        Ok(Box::new(File::new(self.clone(), modified, data, headers)))
+        Ok(Box::new(File::new(
+            self.clone(),
+            self.load_file(globals.timezone())?,
+        )))
     }
 }
 
 impl_generate_config_from_default!(FileConfig);
+
+/// The data resulting from loading a configured file.
+pub struct FileData {
+    /// The ordered set of headers of the data columns.
+    pub headers: Vec<String>,
+    /// The data contained in the file.
+    pub data: Vec<Vec<Value>>,
+    /// The last modified time of the file.
+    pub modified: SystemTime,
+}
 
 /// A struct that implements [vector_lib::enrichment::Table] to handle loading enrichment data from a CSV file.
 #[derive(Clone)]
@@ -259,17 +280,12 @@ pub struct File {
 
 impl File {
     /// Creates a new [File] based on the provided config.
-    pub fn new(
-        config: FileConfig,
-        last_modified: SystemTime,
-        data: Vec<Vec<Value>>,
-        headers: Vec<String>,
-    ) -> Self {
+    pub fn new(config: FileConfig, data: FileData) -> Self {
         Self {
             config,
-            last_modified,
-            data,
-            headers,
+            last_modified: data.modified,
+            data: data.data,
+            headers: data.headers,
             indexes: Vec::new(),
         }
     }
@@ -589,6 +605,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_file_with_headers() {
+        let dir = tempfile::tempdir().expect("Unable to create tempdir for enrichment table");
+        let path = dir.path().join("table.csv");
+        fs::write(path.clone(), "foo,bar\na,1\nb,2").expect("Failed to write enrichment table");
+
+        let config = FileConfig {
+            file: FileSettings {
+                path,
+                encoding: Encoding::Csv {
+                    include_headers: true,
+                    delimiter: default_delimiter(),
+                },
+            },
+            schema: HashMap::new(),
+        };
+        let data = config
+            .load_file(Default::default())
+            .expect("Failed to parse csv");
+        assert_eq!(vec!["foo".to_string(), "bar".to_string()], data.headers);
+        assert_eq!(
+            vec![
+                vec![Value::from("a"), Value::from("1")],
+                vec![Value::from("b"), Value::from("2")],
+            ],
+            data.data
+        );
+    }
+
+    #[test]
+    fn parse_file_no_headers() {
+        let dir = tempfile::tempdir().expect("Unable to create tempdir for enrichment table");
+        let path = dir.path().join("table.csv");
+        fs::write(path.clone(), "a,1\nb,2").expect("Failed to write enrichment table");
+
+        let config = FileConfig {
+            file: FileSettings {
+                path,
+                encoding: Encoding::Csv {
+                    include_headers: false,
+                    delimiter: default_delimiter(),
+                },
+            },
+            schema: HashMap::new(),
+        };
+        let data = config
+            .load_file(Default::default())
+            .expect("Failed to parse csv");
+        assert_eq!(vec!["0".to_string(), "1".to_string()], data.headers);
+        assert_eq!(
+            vec![
+                vec![Value::from("a"), Value::from("1")],
+                vec![Value::from("b"), Value::from("2")],
+            ],
+            data.data
+        );
+    }
+
+    #[test]
     fn parse_column() {
         let mut schema = HashMap::new();
         schema.insert("col1".to_string(), " string ".to_string());
@@ -696,12 +770,14 @@ mod tests {
     fn finds_row() {
         let file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let condition = Condition::Equals {
@@ -722,13 +798,15 @@ mod tests {
     fn duplicate_indexes() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            Vec::new(),
-            vec![
-                "field1".to_string(),
-                "field2".to_string(),
-                "field3".to_string(),
-            ],
+            FileData {
+                modified: SystemTime::now(),
+                data: Vec::new(),
+                headers: vec![
+                    "field1".to_string(),
+                    "field2".to_string(),
+                    "field3".to_string(),
+                ],
+            },
         );
 
         let handle1 = file.add_index(Case::Sensitive, &["field2", "field3"]);
@@ -742,13 +820,15 @@ mod tests {
     fn errors_on_missing_columns() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            Vec::new(),
-            vec![
-                "field1".to_string(),
-                "field2".to_string(),
-                "field3".to_string(),
-            ],
+            FileData {
+                modified: SystemTime::now(),
+                data: Vec::new(),
+                headers: vec![
+                    "field1".to_string(),
+                    "field2".to_string(),
+                    "field3".to_string(),
+                ],
+            },
         );
 
         let error = file.add_index(Case::Sensitive, &["apples", "field2", "bananas"]);
@@ -762,12 +842,14 @@ mod tests {
     fn finds_row_with_index() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let handle = file.add_index(Case::Sensitive, &["field1"]).unwrap();
@@ -790,13 +872,15 @@ mod tests {
     fn finds_rows_with_index_case_sensitive() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-                vec!["zip".into(), "zoop".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                    vec!["zip".into(), "zoop".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let handle = file.add_index(Case::Sensitive, &["field1"]).unwrap();
@@ -841,17 +925,19 @@ mod tests {
     fn selects_columns() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into(), "zoop".into()],
-                vec!["zirp".into(), "zurp".into(), "zork".into()],
-                vec!["zip".into(), "zoop".into(), "zibble".into()],
-            ],
-            vec![
-                "field1".to_string(),
-                "field2".to_string(),
-                "field3".to_string(),
-            ],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into(), "zoop".into()],
+                    vec!["zirp".into(), "zurp".into(), "zork".into()],
+                    vec!["zip".into(), "zoop".into(), "zibble".into()],
+                ],
+                headers: vec![
+                    "field1".to_string(),
+                    "field2".to_string(),
+                    "field3".to_string(),
+                ],
+            },
         );
 
         let handle = file.add_index(Case::Sensitive, &["field1"]).unwrap();
@@ -885,13 +971,15 @@ mod tests {
     fn finds_rows_with_index_case_insensitive() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-                vec!["zip".into(), "zoop".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                    vec!["zip".into(), "zoop".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let handle = file.add_index(Case::Insensitive, &["field1"]).unwrap();
@@ -945,28 +1033,30 @@ mod tests {
     fn finds_row_with_dates() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec![
-                    "zip".into(),
-                    Value::Timestamp(
-                        chrono::Utc
-                            .with_ymd_and_hms(2015, 12, 7, 0, 0, 0)
-                            .single()
-                            .expect("invalid timestamp"),
-                    ),
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec![
+                        "zip".into(),
+                        Value::Timestamp(
+                            chrono::Utc
+                                .with_ymd_and_hms(2015, 12, 7, 0, 0, 0)
+                                .single()
+                                .expect("invalid timestamp"),
+                        ),
+                    ],
+                    vec![
+                        "zip".into(),
+                        Value::Timestamp(
+                            chrono::Utc
+                                .with_ymd_and_hms(2016, 12, 7, 0, 0, 0)
+                                .single()
+                                .expect("invalid timestamp"),
+                        ),
+                    ],
                 ],
-                vec![
-                    "zip".into(),
-                    Value::Timestamp(
-                        chrono::Utc
-                            .with_ymd_and_hms(2016, 12, 7, 0, 0, 0)
-                            .single()
-                            .expect("invalid timestamp"),
-                    ),
-                ],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let handle = file.add_index(Case::Sensitive, &["field1"]).unwrap();
@@ -1010,12 +1100,14 @@ mod tests {
     fn doesnt_find_row() {
         let file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let condition = Condition::Equals {
@@ -1033,12 +1125,14 @@ mod tests {
     fn doesnt_find_row_with_index() {
         let mut file = File::new(
             Default::default(),
-            SystemTime::now(),
-            vec![
-                vec!["zip".into(), "zup".into()],
-                vec!["zirp".into(), "zurp".into()],
-            ],
-            vec!["field1".to_string(), "field2".to_string()],
+            FileData {
+                modified: SystemTime::now(),
+                data: vec![
+                    vec!["zip".into(), "zup".into()],
+                    vec!["zirp".into(), "zurp".into()],
+                ],
+                headers: vec!["field1".to_string(), "field2".to_string()],
+            },
         );
 
         let handle = file.add_index(Case::Sensitive, &["field1"]).unwrap();

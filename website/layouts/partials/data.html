@@ -131,10 +131,18 @@
 
           <span class="flex items-center space-x-1">
             {{ partial "badge.html" (dict "word" $k "color" "gray") }}
+            {{ if $v.syntax }} 
             {{ partial "badge.html" (dict "word" $v.syntax "color" "gray") }}
+            {{ end }}
           </span>
         </span>
 
+        {{ if eq $k "object" }}
+        <div class="mt-2">
+            {{ template "config-object" (dict "name" $name "config" $v "level" 4) }}
+        </div>
+        {{ end }}
+        
         {{ with $v.examples }}
         {{ template "config-array-examples" (dict "examples" .) }}
         {{ end }}
@@ -722,8 +730,8 @@
             {{- .name -}}
           </span>:
           <span class="text-gray-200">
-            <{{ delimit .type `<span class="text-grey-500"> |
-          </span>` }}></span>{{ if not $isLast }}, {{ end -}}
+            &lt;{{ delimit .type `<span class="text-grey-500"> | </span>` | safeHTML}}&gt;
+          </span>{{ if not $isLast }}, {{ end -}}
           {{ end -}}
           {{- if gt (len $optionalArgs) 0 -}},
           [{{- $lastArg := sub (len $optionalArgs) 1 -}}
@@ -733,14 +741,14 @@
             {{- .name -}}
           </span>:
           <span class="text-gray-200">
-            <{{ delimit .type `<span class="text-grey-500"> |
-          </span>` }}></span>{{ if not $isLast }}, {{ end -}}
+            &lt;{{ delimit .type `<span class="text-grey-500"> | </span>`  | safeHTML}}&gt;
+          </span>{{ if not $isLast }}, {{ end -}}
           {{ end -}}]{{ end }})
           {{- with $return -}}
           <div class="ml-3">
             <span class="font-extrabold">::</span> <span class="text-gray-200">
-              <{{ delimit .types " | " }}>
-            </span>{{ if not $infallible }}, &lt;error>{{ end }}
+              &lt;{{ delimit .types " | " }}&gt;
+            </span>{{ if not $infallible }}, &lt;error&gt;{{ end }}
           </div>
           {{- end -}}
         </div>
@@ -1630,7 +1638,7 @@
 
 {{ define "config-array-examples" }}
 {{ $json := .examples | jsonify (dict "indent" "  ") }}
-<div x-data="{ open: false }" class="mt-2.5 border rounded py-2 px-3 dark:border-gray-700">
+<div x-data="{ open: false }" class="mt-2 border rounded py-2 px-3 dark:border-gray-700">
   <span class="flex justify-between items-center">
     <span class="text-sm">
       Examples

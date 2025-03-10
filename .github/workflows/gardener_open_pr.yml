@@ -10,7 +10,7 @@ on:
 jobs:
   add-contributor-to-project:
     name: Add contributor PR to Gardener project board
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: ${{ github.actor != 'dependabot[bot]' }}
     steps:
@@ -26,18 +26,18 @@ jobs:
           username: ${{ github.actor }}
           team: vector
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
-      - uses: actions/add-to-project@v1.0.1
+      - uses: actions/add-to-project@v1.0.2
         if: ${{ steps.checkVectorMember.outputs.isTeamMember == 'false' }}
         with:
           project-url: https://github.com/orgs/vectordotdev/projects/49
           github-token: ${{ secrets.GH_PROJECT_PAT }}
   add-dependabot-to-project:
     name: Add dependabot PR to Gardener project board
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: ${{ github.actor == 'dependabot[bot]' }}
     steps:
-      - uses: actions/add-to-project@v1.0.1
+      - uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/vectordotdev/projects/49
           github-token: ${{ secrets.GH_PROJECT_PAT }}

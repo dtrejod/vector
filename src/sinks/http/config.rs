@@ -152,7 +152,7 @@ impl From<HttpMethod> for Method {
 
 impl HttpSinkConfig {
     fn build_http_client(&self, cx: &SinkContext) -> crate::Result<HttpClient> {
-        let tls = TlsSettings::from_options(&self.tls)?;
+        let tls = TlsSettings::from_options(self.tls.as_ref())?;
         Ok(HttpClient::new(tls, cx.proxy())?)
     }
 
@@ -308,6 +308,8 @@ impl SinkConfig for HttpSinkConfig {
 
 #[cfg(test)]
 mod tests {
+    use vector_lib::codecs::encoding::format::JsonSerializerOptions;
+
     use super::*;
     use crate::components::validation::prelude::*;
 
@@ -323,7 +325,11 @@ mod tests {
                 method: HttpMethod::Post,
                 encoding: EncodingConfigWithFraming::new(
                     None,
-                    JsonSerializerConfig::new(MetricTagValues::Full).into(),
+                    JsonSerializerConfig::new(
+                        MetricTagValues::Full,
+                        JsonSerializerOptions::default(),
+                    )
+                    .into(),
                     Transformer::default(),
                 ),
                 auth: None,

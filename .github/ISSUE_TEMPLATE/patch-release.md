@@ -8,18 +8,17 @@ labels: "domain: releasing"
 Before the release:
 
 - [ ] Create a new release preparation branch from the current release branch
-  - `git fetch && git checkout v0.<current minor version> && git checkout -b prepare-v0.<new version number>`
+  - `git fetch && git checkout v0.<current minor version> && git checkout -b website-prepare-v0.<new version number>`
 - [ ] Cherry-pick in all commits to be released from the associated release milestone
   - If any merge conflicts occur, attempt to solve them and if needed enlist the aid of those familiar with the conflicting commits.
+- [ ] Bump the release number in the `Cargo.toml` to the current version number
 - [ ] Run `cargo vdev build release-cue` to generate a new cue file for the release
-- [ ] Add `changelog` key to generated cue file
   - [ ] Add description key to the generated cue file with a description of the release (see
         previous releases for examples).
 - [ ] Update version number in `distribution/install.sh`
 - [ ] Add new version to `website/cue/reference/versions.cue`
 - [ ] Create new release md file by copying an existing one in `./website/content/en/releases/` and
       updating version number
-- [ ] Bump the release number in the `Cargo.toml` to the current version number
 - [ ] Run `cargo check` to regenerate `Cargo.lock` file
 - [ ] Commit these changes
 - [ ] Open PR against the release branch (`v0.<new version number>`) for review
@@ -40,6 +39,8 @@ On the day of release:
 - [ ] Wait for release workflow to complete
   - Discoverable via [https://github.com/timberio/vector/actions/workflows/release.yml](https://github.com/timberio/vector/actions/workflows/release.yml)
 - [ ] Release Linux packages. See [`vector-release` usage](https://github.com/DataDog/vector-release#usage).
+  - Note: the pipeline inputs are the version number `v0.<new version number>` and a personal GitHub token.
+  - [ ] Manually trigger the `trigger-package-release-pipeline-prod-stable` job.
 - [ ] Push the release branch to update the remote (This should close the preparation branch PR).
   - `git checkout v0.<current minor version> && git push`
 - [ ] Release updated Helm chart. See [releasing Helm chart](https://github.com/vectordotdev/helm-charts#releasing).

@@ -101,7 +101,7 @@ impl EncodingConfigWithFraming {
         let framer = match (framer, &serializer) {
             (Some(framer), _) => framer,
             (None, Serializer::Json(_)) => match sink_type {
-                SinkType::StreamBased => NewlineDelimitedEncoder::new().into(),
+                SinkType::StreamBased => NewlineDelimitedEncoder::default().into(),
                 SinkType::MessageBased => CharacterDelimitedEncoder::new(b',').into(),
             },
             (None, Serializer::Avro(_) | Serializer::Native(_)) => {
@@ -119,12 +119,13 @@ impl EncodingConfigWithFraming {
             }
             (
                 None,
-                Serializer::Csv(_)
+                Serializer::Cef(_)
+                | Serializer::Csv(_)
                 | Serializer::Logfmt(_)
                 | Serializer::NativeJson(_)
                 | Serializer::RawMessage(_)
                 | Serializer::Text(_),
-            ) => NewlineDelimitedEncoder::new().into(),
+            ) => NewlineDelimitedEncoder::default().into(),
         };
 
         Ok((framer, serializer))

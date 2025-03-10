@@ -47,6 +47,7 @@ use vrl::value::kind::Collection;
 use vrl::value::Kind;
 use warp::{filters::BoxedFilter, reject::Rejection, reply::Response, Filter, Reply};
 
+use crate::common::http::ErrorMessage;
 use crate::http::{build_http_trace_layer, KeepaliveConfig, MaxConnectionAgeLayer};
 use crate::{
     codecs::{Decoder, DecodingConfig},
@@ -58,7 +59,7 @@ use crate::{
     internal_events::{HttpBytesReceived, HttpDecompressError, StreamClosedError},
     schema,
     serde::{bool_or_struct, default_decoding, default_framing_message_based},
-    sources::{self, util::ErrorMessage},
+    sources::{self},
     tls::{MaybeTlsSettings, TlsEnableableConfig},
     SourceSender,
 };
@@ -180,7 +181,7 @@ impl SourceConfig for DatadogAgentConfig {
             DecodingConfig::new(self.framing.clone(), self.decoding.clone(), log_namespace)
                 .build()?;
 
-        let tls = MaybeTlsSettings::from_config(&self.tls, true)?;
+        let tls = MaybeTlsSettings::from_config(self.tls.as_ref(), true)?;
         let source = DatadogAgentSource::new(
             self.store_api_key,
             decoder,
@@ -294,7 +295,7 @@ impl SourceConfig for DatadogAgentConfig {
 
         if self.multiple_outputs {
             if !self.disable_logs {
-                output.push(SourceOutput::new_logs(DataType::Log, definition).with_port(LOGS))
+                output.push(SourceOutput::new_maybe_logs(DataType::Log, definition).with_port(LOGS))
             }
             if !self.disable_metrics {
                 output.push(SourceOutput::new_metrics().with_port(METRICS))
@@ -303,7 +304,10 @@ impl SourceConfig for DatadogAgentConfig {
                 output.push(SourceOutput::new_traces().with_port(TRACES))
             }
         } else {
-            output.push(SourceOutput::new_logs(DataType::all(), definition))
+            output.push(SourceOutput::new_maybe_logs(
+                DataType::all_bits(),
+                definition,
+            ))
         }
         output
     }
@@ -319,8 +323,6 @@ impl SourceConfig for DatadogAgentConfig {
 
 #[derive(Clone, Copy, Debug, Snafu)]
 pub(crate) enum ApiError {
-    BadRequest,
-    InvalidDataFormat,
     ServerShutdown,
 }
 
@@ -460,6 +462,12 @@ impl DatadogAgentSource {
                         let mut decoded = Vec::new();
                         MultiGzDecoder::new(body.reader())
                             .read_to_end(&mut decoded)
+                            .map_err(|error| handle_decode_error(encoding, error))?;
+                        decoded.into()
+                    }
+                    "zstd" => {
+                        let mut decoded = Vec::new();
+                        zstd::stream::copy_decode(body.reader(), &mut decoded)
                             .map_err(|error| handle_decode_error(encoding, error))?;
                         decoded.into()
                     }

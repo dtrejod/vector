@@ -54,6 +54,12 @@ components: sources: internal_metrics: {
 		}
 
 		// Instance-level "process" metrics
+		active_clients: {
+			description:       "Number of clients attached to a component."
+			type:              "gauge"
+			default_namespace: "vector"
+			tags:              _component_tags
+		}
 		aggregate_events_recorded_total: {
 			description:       "The number of events recorded by the aggregate transform."
 			type:              "counter"
@@ -225,65 +231,6 @@ components: sources: internal_metrics: {
 		}
 		k8s_docker_format_parse_failures_total: {
 			description:       "The total number of failures to parse a message as a JSON object."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_reflector_desyncs_total: {
-			description:       "The total number of desyncs for the reflector."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_state_ops_total: {
-			description:       "The total number of state operations."
-			type:              "counter"
-			default_namespace: "vector"
-			tags: _component_tags & {
-				op_kind: {
-					description: "The kind of operation performed."
-					required:    false
-				}
-			}
-		}
-		k8s_stream_chunks_processed_total: {
-			description:       "The total number of chunks processed from the stream of Kubernetes resources."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_stream_processed_bytes_total: {
-			description:       "The number of bytes processed from the stream of Kubernetes resources."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_watch_requests_invoked_total: {
-			description:       "The total number of watch requests invoked."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_watch_requests_failed_total: {
-			description:       "The total number of watch requests failed."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_watch_stream_failed_total: {
-			description:       "The total number of watch streams failed."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_watch_stream_items_obtained_total: {
-			description:       "The total number of items obtained from a watch stream."
-			type:              "counter"
-			default_namespace: "vector"
-			tags:              _component_tags
-		}
-		k8s_watcher_http_error_total: {
-			description:       "The total number of HTTP error responses for the Kubernetes watcher."
 			type:              "counter"
 			default_namespace: "vector"
 			tags:              _component_tags
@@ -481,15 +428,15 @@ components: sources: internal_metrics: {
 			}
 		}
 		component_sent_events_total: {
-			description:                     "The total number of events emitted by this component."
-			type:                            "counter"
-			default_namespace:               "vector"
+			description:       "The total number of events emitted by this component."
+			type:              "counter"
+			default_namespace: "vector"
 			tags: _component_tags & {output: _output}
 		}
 		component_sent_event_bytes_total: {
-			description:                     "The total number of event bytes emitted by this component."
-			type:                            "counter"
-			default_namespace:               "vector"
+			description:       "The total number of event bytes emitted by this component."
+			type:              "counter"
+			default_namespace: "vector"
 			tags: _component_tags & {output: _output}
 		}
 		datadog_logs_received_in_total: {

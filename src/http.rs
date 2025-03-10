@@ -1,11 +1,4 @@
 #![allow(missing_docs)]
-use std::{
-    fmt,
-    net::SocketAddr,
-    task::{Context, Poll},
-    time::Duration,
-};
-
 use futures::future::BoxFuture;
 use headers::{Authorization, HeaderMapExt};
 use http::{
@@ -22,6 +15,13 @@ use hyper_proxy::ProxyConnector;
 use rand::Rng;
 use serde_with::serde_as;
 use snafu::{ResultExt, Snafu};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::SocketAddr,
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::time::Instant;
 use tower::{Layer, Service};
 use tower_http::{
@@ -140,13 +140,9 @@ where
 
             // Handle the errors and extract the response.
             let response = response_result
-                .map_err(|error| {
+                .inspect_err(|error| {
                     // Emit the error into the internal events system.
-                    emit!(http_client::GotHttpWarning {
-                        error: &error,
-                        roundtrip
-                    });
-                    error
+                    emit!(http_client::GotHttpWarning { error, roundtrip });
                 })
                 .context(CallRequestSnafu)?;
 
@@ -205,10 +201,10 @@ pub fn build_tls_connector(
     let settings = tls_settings.tls().cloned();
     https.set_callback(move |c, _uri| {
         if let Some(settings) = &settings {
-            settings.apply_connect_configuration(c);
+            settings.apply_connect_configuration(c)
+        } else {
+            Ok(())
         }
-
-        Ok(())
     });
     Ok(https)
 }
@@ -359,19 +355,19 @@ pub fn get_http_scheme_from_uri(uri: &Uri) -> &'static str {
 /// Builds a [TraceLayer] configured for a HTTP server.
 ///
 /// This layer emits HTTP specific telemetry for requests received, responses sent, and handler duration.
-pub fn build_http_trace_layer(
+pub fn build_http_trace_layer<T, U>(
     span: Span,
 ) -> TraceLayer<
     SharedClassifier<ServerErrorsAsFailures>,
-    impl Fn(&Request<Body>) -> Span + Clone,
-    impl Fn(&Request<Body>, &Span) + Clone,
-    impl Fn(&Response<Body>, Duration, &Span) + Clone,
+    impl Fn(&Request<T>) -> Span + Clone,
+    impl Fn(&Request<T>, &Span) + Clone,
+    impl Fn(&Response<U>, Duration, &Span) + Clone,
     (),
     (),
     (),
 > {
     TraceLayer::new_for_http()
-        .make_span_with(move |request: &Request<Body>| {
+        .make_span_with(move |request: &Request<T>| {
             // This is an error span so that the labels are always present for metrics.
             error_span!(
                parent: &span,
@@ -380,14 +376,12 @@ pub fn build_http_trace_layer(
                path = %request.uri().path(),
             )
         })
-        .on_request(Box::new(|_request: &Request<Body>, _span: &Span| {
+        .on_request(Box::new(|_request: &Request<T>, _span: &Span| {
             emit!(HttpServerRequestReceived);
         }))
-        .on_response(
-            |response: &Response<Body>, latency: Duration, _span: &Span| {
-                emit!(HttpServerResponseSent { response, latency });
-            },
-        )
+        .on_response(|response: &Response<U>, latency: Duration, _span: &Span| {
+            emit!(HttpServerResponseSent { response, latency });
+        })
         .on_failure(())
         .on_body_chunk(())
         .on_eos(())
@@ -446,10 +440,9 @@ impl Default for KeepaliveConfig {
 ///
 /// **Notes:**
 /// - This is intended to be used in a Hyper server (or similar) that will automatically close
-/// the connection after a response with a `Connection: close` header is sent.
+///   the connection after a response with a `Connection: close` header is sent.
 /// - This layer assumes that it is instantiated once per connection, which is true within the
-/// Hyper framework.
-
+///   Hyper framework.
 pub struct MaxConnectionAgeLayer {
     start_reference: Instant,
     max_connection_age: Duration,
@@ -469,8 +462,8 @@ impl MaxConnectionAgeLayer {
         // Ensure the jitter_factor is between 0.0 and 1.0
         let jitter_factor = jitter_factor.clamp(0.0, 1.0);
         // Generate a random jitter factor between `1 - jitter_factor`` and `1 + jitter_factor`.
-        let mut rng = rand::thread_rng();
-        let random_jitter_factor = rng.gen_range(-jitter_factor..=jitter_factor) + 1.;
+        let mut rng = rand::rng();
+        let random_jitter_factor = rng.random_range(-jitter_factor..=jitter_factor) + 1.;
         duration.mul_f64(random_jitter_factor)
     }
 }
@@ -498,9 +491,9 @@ where
 ///
 /// **Notes:**
 /// - This is intended to be used in a Hyper server (or similar) that will automatically close
-/// the connection after a response with a `Connection: close` header is sent.
+///   the connection after a response with a `Connection: close` header is sent.
 /// - This service assumes that it is instantiated once per connection, which is true within the
-/// Hyper framework.
+///   Hyper framework.
 #[derive(Clone)]
 pub struct MaxConnectionAgeService<S> {
     service: S,
@@ -560,6 +553,59 @@ where
         })
     }
 }
+
+/// Configuration of the query parameter value for HTTP requests.
+#[configurable_component]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+#[configurable(metadata(docs::enum_tag_description = "Query parameter value"))]
+pub enum QueryParameterValue {
+    /// Query parameter with single value
+    SingleParam(String),
+    /// Query parameter with multiple values
+    MultiParams(Vec<String>),
+}
+
+impl QueryParameterValue {
+    /// Returns an iterator over string slices of the parameter values
+    pub fn iter(&self) -> std::iter::Map<std::slice::Iter<'_, String>, fn(&String) -> &str> {
+        match self {
+            QueryParameterValue::SingleParam(param) => std::slice::from_ref(param).iter(),
+            QueryParameterValue::MultiParams(params) => params.iter(),
+        }
+        .map(String::as_str)
+    }
+
+    /// Convert to Vec<String> for owned iteration
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            QueryParameterValue::SingleParam(param) => vec![param],
+            QueryParameterValue::MultiParams(params) => params,
+        }
+    }
+}
+
+// Implement IntoIterator for &QueryParameterValue
+impl<'a> IntoIterator for &'a QueryParameterValue {
+    type Item = &'a str;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, String>, fn(&String) -> &str>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+// Implement IntoIterator for owned QueryParameterValue
+impl IntoIterator for QueryParameterValue {
+    type Item = String;
+    type IntoIter = std::vec::IntoIter<String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
+pub type QueryParameters = HashMap<String, QueryParameterValue>;
 
 #[cfg(test)]
 mod tests {

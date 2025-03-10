@@ -47,7 +47,7 @@ base: components: sources: opentelemetry: configuration: {
 							description: """
 																Sets the list of supported ALPN protocols.
 
-																Declare the supported ALPN protocols, which are used during negotiation with peer. They are prioritized in the order
+																Declare the supported ALPN protocols, which are used during negotiation with a peer. They are prioritized in the order
 																that they are defined.
 																"""
 							required: false
@@ -69,7 +69,7 @@ base: components: sources: opentelemetry: configuration: {
 																The certificate must be in DER, PEM (X.509), or PKCS#12 format. Additionally, the certificate can be provided as
 																an inline string in PEM format.
 
-																If this is set, and is not a PKCS#12 archive, `key_file` must also be set.
+																If this is set _and_ is not a PKCS#12 archive, `key_file` must also be set.
 																"""
 							required: false
 							type: string: examples: ["/path/to/host_certificate.crt"]
@@ -102,6 +102,15 @@ base: components: sources: opentelemetry: configuration: {
 							required: false
 							type: string: examples: ["${KEY_PASS_ENV_VAR}", "PassWord1"]
 						}
+						server_name: {
+							description: """
+																Server name to use when using Server Name Indication (SNI).
+
+																Only relevant for outgoing connections.
+																"""
+							required: false
+							type: string: examples: ["www.example.com"]
+						}
 						verify_certificate: {
 							description: """
 																Enables certificate verification. For components that create a server, this requires that the
@@ -111,7 +120,7 @@ base: components: sources: opentelemetry: configuration: {
 																If enabled, certificates must not be expired and must be issued by a trusted
 																issuer. This verification operates in a hierarchical manner, checking that the leaf certificate (the
 																certificate presented by the client/server) is not only valid, but that the issuer of that certificate is also valid, and
-																so on until the verification process reaches a root certificate.
+																so on, until the verification process reaches a root certificate.
 
 																Do NOT set this to `false` unless you understand the risks of not verifying the validity of certificates.
 																"""
@@ -143,6 +152,7 @@ base: components: sources: opentelemetry: configuration: {
 		type: object: {
 			examples: [{
 				address: "0.0.0.0:4318"
+				headers: []
 				keepalive: {
 					max_connection_age_jitter_factor: 0.1
 					max_connection_age_secs:          300
@@ -157,6 +167,22 @@ base: components: sources: opentelemetry: configuration: {
 						"""
 					required: true
 					type: string: examples: ["0.0.0.0:4318", "localhost:4318"]
+				}
+				headers: {
+					description: """
+						A list of HTTP headers to include in the log event.
+
+						Accepts the wildcard (`*`) character for headers matching a specified pattern.
+
+						Specifying "*" results in all headers included in the log event.
+
+						These headers are not included in the JSON payload if a field with a conflicting name exists.
+						"""
+					required: false
+					type: array: {
+						default: []
+						items: type: string: examples: ["User-Agent", "X-My-Custom-Header", "X-*", "*"]
+					}
 				}
 				keepalive: {
 					description: "Configuration of HTTP server keepalive parameters."
@@ -200,7 +226,7 @@ base: components: sources: opentelemetry: configuration: {
 							description: """
 																Sets the list of supported ALPN protocols.
 
-																Declare the supported ALPN protocols, which are used during negotiation with peer. They are prioritized in the order
+																Declare the supported ALPN protocols, which are used during negotiation with a peer. They are prioritized in the order
 																that they are defined.
 																"""
 							required: false
@@ -222,7 +248,7 @@ base: components: sources: opentelemetry: configuration: {
 																The certificate must be in DER, PEM (X.509), or PKCS#12 format. Additionally, the certificate can be provided as
 																an inline string in PEM format.
 
-																If this is set, and is not a PKCS#12 archive, `key_file` must also be set.
+																If this is set _and_ is not a PKCS#12 archive, `key_file` must also be set.
 																"""
 							required: false
 							type: string: examples: ["/path/to/host_certificate.crt"]
@@ -255,6 +281,15 @@ base: components: sources: opentelemetry: configuration: {
 							required: false
 							type: string: examples: ["${KEY_PASS_ENV_VAR}", "PassWord1"]
 						}
+						server_name: {
+							description: """
+																Server name to use when using Server Name Indication (SNI).
+
+																Only relevant for outgoing connections.
+																"""
+							required: false
+							type: string: examples: ["www.example.com"]
+						}
 						verify_certificate: {
 							description: """
 																Enables certificate verification. For components that create a server, this requires that the
@@ -264,7 +299,7 @@ base: components: sources: opentelemetry: configuration: {
 																If enabled, certificates must not be expired and must be issued by a trusted
 																issuer. This verification operates in a hierarchical manner, checking that the leaf certificate (the
 																certificate presented by the client/server) is not only valid, but that the issuer of that certificate is also valid, and
-																so on until the verification process reaches a root certificate.
+																so on, until the verification process reaches a root certificate.
 
 																Do NOT set this to `false` unless you understand the risks of not verifying the validity of certificates.
 																"""

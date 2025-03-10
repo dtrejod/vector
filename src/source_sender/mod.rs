@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt, sync::Arc, time::Instant};
 
 use chrono::Utc;
 use futures::{Stream, StreamExt};
-use metrics::{register_histogram, Histogram};
+use metrics::{histogram, Histogram};
 use tracing::Span;
 use vector_lib::buffers::topology::channel::{self, LimitedReceiver, LimitedSender};
 use vector_lib::buffers::EventCount;
@@ -170,13 +170,13 @@ impl SourceSender {
             buf_size: CHUNK_SIZE,
             inner: None,
             named_inners: Default::default(),
-            lag_time: Some(register_histogram!(LAG_TIME_NAME)),
+            lag_time: Some(histogram!(LAG_TIME_NAME)),
         }
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn new_test_sender_with_buffer(n: usize) -> (Self, LimitedReceiver<SourceSenderItem>) {
-        let lag_time = Some(register_histogram!(LAG_TIME_NAME));
+        let lag_time = Some(histogram!(LAG_TIME_NAME));
         let output_id = OutputId {
             component: "test".to_string().into(),
             port: None,
@@ -481,11 +481,10 @@ impl Inner {
         let mut unsent_event_count = UnsentEventCount::new(events.len());
         for events in array::events_into_arrays(events, Some(CHUNK_SIZE)) {
             let count = events.len();
-            self.send(events).await.map_err(|err| {
+            self.send(events).await.inspect_err(|_| {
                 // The unsent event count is discarded here because the caller emits the
                 // `StreamClosedError`.
                 unsent_event_count.discard();
-                err
             })?;
             unsent_event_count.decr(count);
         }
@@ -536,7 +535,7 @@ const fn get_timestamp_millis(value: &Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration};
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use tokio::time::timeout;
     use vector_lib::event::{LogEvent, Metric, MetricKind, MetricValue, TraceEvent};
     use vrl::event_path;
@@ -582,7 +581,7 @@ mod tests {
     async fn emit_and_test(make_event: impl FnOnce(DateTime<Utc>) -> Event) {
         metrics::init_test();
         let (mut sender, _stream) = SourceSender::new_test();
-        let millis = thread_rng().gen_range(10..10000);
+        let millis = rng().random_range(10..10000);
         let timestamp = Utc::now() - Duration::milliseconds(millis);
         let expected = millis as f64 / 1000.0;
 

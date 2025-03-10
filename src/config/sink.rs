@@ -11,10 +11,11 @@ use vector_lib::configurable::{
 };
 use vector_lib::{
     config::{AcknowledgementsConfig, GlobalOptions, Input},
+    id::Inputs,
     sink::VectorSink,
 };
 
-use super::{id::Inputs, schema, ComponentKey, ProxyConfig, Resource};
+use super::{dot_graph::GraphConfig, schema, ComponentKey, ProxyConfig, Resource};
 use crate::extra_context::ExtraContext;
 use crate::sinks::{util::UriSerde, Healthcheck};
 
@@ -53,6 +54,10 @@ where
     T: Configurable + Serialize + 'static,
 {
     #[configurable(derived)]
+    #[serde(default, skip_serializing_if = "vector_lib::serde::is_default")]
+    pub graph: GraphConfig,
+
+    #[configurable(derived)]
     pub inputs: Inputs<T>,
 
     /// The full URI to make HTTP healthcheck requests to.
@@ -60,11 +65,11 @@ where
     /// This must be a valid URI, which requires at least the scheme and host. All other
     /// components -- port, path, etc -- are allowed as well.
     #[configurable(deprecated, metadata(docs::hidden), validation(format = "uri"))]
-    healthcheck_uri: Option<UriSerde>,
+    pub healthcheck_uri: Option<UriSerde>,
 
     #[configurable(derived, metadata(docs::advanced))]
     #[serde(default, deserialize_with = "crate::serde::bool_or_struct")]
-    healthcheck: SinkHealthcheckOptions,
+    pub healthcheck: SinkHealthcheckOptions,
 
     #[configurable(derived)]
     #[serde(default, skip_serializing_if = "vector_lib::serde::is_default")]
@@ -72,7 +77,7 @@ where
 
     #[configurable(derived)]
     #[serde(default, skip_serializing_if = "vector_lib::serde::is_default")]
-    proxy: ProxyConfig,
+    pub proxy: ProxyConfig,
 
     #[serde(flatten)]
     #[configurable(metadata(docs::hidden))]
@@ -95,6 +100,7 @@ where
             healthcheck_uri: None,
             inner: inner.into(),
             proxy: Default::default(),
+            graph: Default::default(),
         }
     }
 
@@ -151,6 +157,7 @@ where
             healthcheck: self.healthcheck,
             healthcheck_uri: self.healthcheck_uri,
             proxy: self.proxy,
+            graph: self.graph,
         }
     }
 }
@@ -234,6 +241,7 @@ dyn_clone::clone_trait_object!(SinkConfig);
 pub struct SinkContext {
     pub healthcheck: SinkHealthcheckOptions,
     pub globals: GlobalOptions,
+    pub enrichment_tables: vector_lib::enrichment::TableRegistry,
     pub proxy: ProxyConfig,
     pub schema: schema::Options,
     pub app_name: String,
@@ -249,6 +257,7 @@ impl Default for SinkContext {
         Self {
             healthcheck: Default::default(),
             globals: Default::default(),
+            enrichment_tables: Default::default(),
             proxy: Default::default(),
             schema: Default::default(),
             app_name: crate::get_app_name().to_string(),

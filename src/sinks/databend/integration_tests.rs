@@ -13,7 +13,7 @@ use crate::{
     sinks::util::UriSerde,
     test_util::{
         components::{run_and_assert_sink_compliance, HTTP_SINK_TAGS},
-        random_string, trace_init,
+        random_table_name, trace_init,
     },
 };
 
@@ -22,10 +22,6 @@ use super::config::DatabendConfig;
 fn databend_endpoint() -> String {
     std::env::var("DATABEND_ENDPOINT")
         .unwrap_or_else(|_| "databend://vector:vector@databend:8000?sslmode=disable".into())
-}
-
-fn gen_table() -> String {
-    format!("test_{}", random_string(10).to_lowercase())
 }
 
 fn make_event() -> (Event, BatchStatusReceiver) {
@@ -38,7 +34,7 @@ fn make_event() -> (Event, BatchStatusReceiver) {
 async fn prepare_config(codec: &str, compression: &str) -> (String, String, DatabendAPIClient) {
     trace_init();
 
-    let table = gen_table();
+    let table = random_table_name();
     let endpoint = databend_endpoint();
     let _endpoint: UriSerde = endpoint.parse().unwrap();
 
@@ -151,7 +147,7 @@ async fn insert_event_csv_gzip() {
     insert_event_with_cfg(cfg, table, client).await;
 }
 
-fn response_to_map(resp: &DatabendAPIResponse) -> Vec<BTreeMap<String, String>> {
+fn response_to_map(resp: &DatabendAPIResponse) -> Vec<BTreeMap<String, Option<String>>> {
     let mut result = Vec::new();
     for row in &resp.data {
         let mut map = BTreeMap::new();

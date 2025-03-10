@@ -256,7 +256,7 @@ async fn source(
 
 async fn send_with_path(address: SocketAddr, body: &str, headers: HeaderMap, path: &str) -> u16 {
     reqwest::Client::new()
-        .post(&format!("http://{}{}", address, path))
+        .post(format!("http://{}{}", address, path))
         .headers(headers)
         .body(body.to_owned())
         .send()
@@ -1590,7 +1590,7 @@ fn test_config_outputs_with_disabled_data_types() {
             assert_eq!(outputs.contains(&DataType::Trace), !disable_traces);
             assert_eq!(outputs.contains(&DataType::Metric), !disable_metrics);
         } else {
-            assert!(outputs.contains(&DataType::all()));
+            assert!(outputs.contains(&DataType::all_bits()));
             assert!(outputs.len() == 1);
         }
     }
