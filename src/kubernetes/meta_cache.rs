@@ -31,14 +31,20 @@ impl MetaCache {
 pub struct MetaDescribe {
     name: String,
     namespace: String,
+    uid: String,
 }
 
 impl MetaDescribe {
     pub fn from_meta(meta: &ObjectMeta) -> Self {
         let name = meta.name.clone().unwrap_or_default();
         let namespace = meta.namespace.clone().unwrap_or_default();
+        let uid = meta.uid.clone().unwrap_or_default();
 
-        Self { name, namespace }
+        Self {
+            name,
+            namespace,
+            uid,
+        }
     }
 }
 
@@ -55,6 +61,7 @@ mod tests {
         let obj_meta = ObjectMeta {
             name: Some("a".to_string()),
             namespace: Some("b".to_string()),
+            uid: Some("c".to_string()),
             ..ObjectMeta::default()
         };
         let meta_desc = MetaDescribe::from_meta(&obj_meta);
@@ -70,6 +77,7 @@ mod tests {
         let obj_meta = ObjectMeta {
             name: Some("a".to_string()),
             namespace: Some("b".to_string()),
+            uid: Some("c".to_string()),
             ..ObjectMeta::default()
         };
         let meta_desc = MetaDescribe::from_meta(&obj_meta);
@@ -87,6 +95,7 @@ mod tests {
         let obj_meta = ObjectMeta {
             name: Some("a".to_string()),
             namespace: Some("b".to_string()),
+            uid: Some("c".to_string()),
             ..ObjectMeta::default()
         };
         let meta_desc = MetaDescribe::from_meta(&obj_meta);
