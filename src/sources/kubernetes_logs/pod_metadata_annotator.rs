@@ -197,7 +197,9 @@ impl PodMetadataAnnotator {
     pub fn annotate<'a>(&self, event: &mut Event, file: &'a str) -> Option<LogFileInfo<'a>> {
         let log = event.as_mut_log();
         let file_info = parse_log_file_path(file)?;
-        let obj = ObjectRef::<Pod>::new(file_info.pod_name).within(file_info.pod_namespace);
+        let mut obj = ObjectRef::<Pod>::new(file_info.pod_name).within(file_info.pod_namespace);
+        obj.extra.uid = Some(file_info.pod_uid.to_string());
+
         let resource = self.pods_state_reader.get(&obj)?;
         let pod: &Pod = resource.as_ref();
 
