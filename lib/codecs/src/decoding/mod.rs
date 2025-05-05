@@ -15,6 +15,7 @@ pub use format::{
     NativeDeserializer, NativeDeserializerConfig, NativeJsonDeserializer,
     NativeJsonDeserializerConfig, NativeJsonDeserializerOptions, ProtobufDeserializer,
     ProtobufDeserializerConfig, ProtobufDeserializerOptions,
+    JournalExportDeserializer, JournalExportDeserializerConfig,
 };
 #[cfg(feature = "syslog")]
 pub use format::{SyslogDeserializer, SyslogDeserializerConfig, SyslogDeserializerOptions};
@@ -286,6 +287,12 @@ pub enum DeserializerConfig {
     ///
     /// [vrl]: https://vector.dev/docs/reference/vrl
     Vrl(VrlDeserializerConfig),
+
+    /// Decodes the raw bytes as a systemd Journal Export Format message.
+    ///
+    /// This format is used by systemd-journal-remote.service for receiving logs over HTTP.
+    /// See: https://www.freedesktop.org/wiki/Software/systemd/export/
+    JournalExport(JournalExportDeserializerConfig),
 }
 
 impl From<BytesDeserializerConfig> for DeserializerConfig {
@@ -331,6 +338,12 @@ impl From<InfluxdbDeserializerConfig> for DeserializerConfig {
     }
 }
 
+impl From<JournalExportDeserializerConfig> for DeserializerConfig {
+    fn from(config: JournalExportDeserializerConfig) -> Self {
+        Self::JournalExport(config)
+    }
+}
+
 impl DeserializerConfig {
     /// Build the `Deserializer` from this configuration.
     pub fn build(&self) -> vector_common::Result<Deserializer> {
@@ -353,6 +366,7 @@ impl DeserializerConfig {
             DeserializerConfig::Gelf(config) => Ok(Deserializer::Gelf(config.build())),
             DeserializerConfig::Influxdb(config) => Ok(Deserializer::Influxdb(config.build())),
             DeserializerConfig::Vrl(config) => Ok(Deserializer::Vrl(config.build()?)),
+            DeserializerConfig::JournalExport(config) => Ok(Deserializer::JournalExport(config.build())),
         }
     }
 
@@ -374,6 +388,7 @@ impl DeserializerConfig {
             DeserializerConfig::Gelf(_) => {
                 FramingConfig::CharacterDelimited(CharacterDelimitedDecoderConfig::new(0))
             }
+            DeserializerConfig::JournalExport(_) => FramingConfig::Bytes,
         }
     }
 
@@ -402,6 +417,7 @@ impl DeserializerConfig {
             DeserializerConfig::Gelf(config) => config.output_type(),
             DeserializerConfig::Vrl(config) => config.output_type(),
             DeserializerConfig::Influxdb(config) => config.output_type(),
+            DeserializerConfig::JournalExport(config) => config.output_type(),
         }
     }
 
@@ -422,6 +438,7 @@ impl DeserializerConfig {
             DeserializerConfig::Gelf(config) => config.schema_definition(log_namespace),
             DeserializerConfig::Influxdb(config) => config.schema_definition(log_namespace),
             DeserializerConfig::Vrl(config) => config.schema_definition(log_namespace),
+            DeserializerConfig::JournalExport(config) => config.schema_definition(log_namespace),
         }
     }
 
@@ -459,6 +476,7 @@ impl DeserializerConfig {
             ) => "text/plain",
             #[cfg(feature = "syslog")]
             (DeserializerConfig::Syslog(_), _) => "text/plain",
+            (DeserializerConfig::JournalExport(_), _) => "application/vnd.fdo.journal",
         }
     }
 }
@@ -489,6 +507,8 @@ pub enum Deserializer {
     Influxdb(InfluxdbDeserializer),
     /// Uses a `VrlDeserializer` for deserialization.
     Vrl(VrlDeserializer),
+    /// Uses a `JournalExportDeserializer` for deserialization.
+    JournalExport(JournalExportDeserializer),
 }
 
 impl format::Deserializer for Deserializer {
@@ -510,6 +530,7 @@ impl format::Deserializer for Deserializer {
             Deserializer::Gelf(deserializer) => deserializer.parse(bytes, log_namespace),
             Deserializer::Influxdb(deserializer) => deserializer.parse(bytes, log_namespace),
             Deserializer::Vrl(deserializer) => deserializer.parse(bytes, log_namespace),
+            Deserializer::JournalExport(d) => d.parse(bytes, log_namespace),
         }
     }
 }

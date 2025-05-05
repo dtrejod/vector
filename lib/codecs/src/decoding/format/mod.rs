@@ -14,12 +14,14 @@ mod protobuf;
 #[cfg(feature = "syslog")]
 mod syslog;
 mod vrl;
+mod journal_export;
 
 use ::bytes::Bytes;
 pub use avro::{AvroDeserializer, AvroDeserializerConfig, AvroDeserializerOptions};
 use dyn_clone::DynClone;
 pub use gelf::{GelfDeserializer, GelfDeserializerConfig, GelfDeserializerOptions};
 pub use influxdb::{InfluxdbDeserializer, InfluxdbDeserializerConfig};
+pub use journal_export::{JournalExportDeserializer, JournalExportDeserializerConfig};
 pub use json::{JsonDeserializer, JsonDeserializerConfig, JsonDeserializerOptions};
 pub use native::{NativeDeserializer, NativeDeserializerConfig};
 pub use native_json::{
