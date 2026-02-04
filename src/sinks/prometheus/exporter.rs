@@ -588,7 +588,8 @@ impl StreamSink<Event> for PrometheusExporter {
                                     finalizers.update_status(EventStatus::Delivered);
                                 }
                                 Entry::Vacant(entry) => {
-                                    // First occurrence - convert to absolute and store
+                                    // Otherwise, if we didn't have an existing value or we did and it was not
+                                    // compatible with the new value, simply return the new value as absolute.
                                     entry.insert((preprocessed_metric.into_absolute(), MetricMetadata::new(flush_period)));
                                     finalizers.update_status(EventStatus::Delivered);
                                 }
