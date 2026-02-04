@@ -566,22 +566,6 @@ impl StreamSink<Event> for PrometheusExporter {
                     // Handle metric storage based on kind. For incremental metrics, we must
                     // accumulate atomically under write lock to prevent race conditions.
                     match preprocessed_metric.kind() {
-                        MetricKind::Absolute => {
-                            // Absolute metrics are already in final form, just store them
-                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
-
-                            match metrics.entry(MetricRef::from_metric(&preprocessed_metric)) {
-                                Entry::Occupied(mut entry) => {
-                                    let (data, metadata) = entry.get_mut();
-                                    *data = preprocessed_metric;
-                                    metadata.refresh();
-                                }
-                                Entry::Vacant(entry) => {
-                                    entry.insert((preprocessed_metric, MetricMetadata::new(flush_period)));
-                                }
-                            }
-                            finalizers.update_status(EventStatus::Delivered);
-                        }
                         MetricKind::Incremental => {
                             // For incremental metrics, accumulate atomically under write lock
                             let mut metrics = self.metrics.write().expect(LOCK_FAILED);
@@ -609,6 +593,22 @@ impl StreamSink<Event> for PrometheusExporter {
                                     finalizers.update_status(EventStatus::Delivered);
                                 }
                             }
+                        }
+                        _ => {
+                            // For all other metric kinds, store as-is
+                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
+
+                            match metrics.entry(MetricRef::from_metric(&preprocessed_metric)) {
+                                Entry::Occupied(mut entry) => {
+                                    let (data, metadata) = entry.get_mut();
+                                    *data = preprocessed_metric;
+                                    metadata.refresh();
+                                }
+                                Entry::Vacant(entry) => {
+                                    entry.insert((preprocessed_metric, MetricMetadata::new(flush_period)));
+                                }
+                            }
+                            finalizers.update_status(EventStatus::Delivered);
                         }
                     }
                 }
