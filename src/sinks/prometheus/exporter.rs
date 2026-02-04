@@ -513,21 +513,10 @@ impl PrometheusExporter {
         match new_metric.kind() {
             MetricKind::Absolute => Some(new_metric),
             MetricKind::Incremental => {
-                let metrics = self.metrics.read().expect(LOCK_FAILED);
-                let metric_ref = MetricRef::from_metric(&new_metric);
-
-                if let Some(existing) = metrics.get(&metric_ref) {
-                    let mut current = existing.0.value().clone();
-                    if current.add(new_metric.value()) {
-                        // If we were able to add to the existing value (i.e. they were compatible),
-                        // return the result as an absolute metric.
-                        return Some(new_metric.with_value(current).into_absolute());
-                    }
-                }
-
-                // Otherwise, if we didn't have an existing value or we did and it was not
-                // compatible with the new value, simply return the new value as absolute.
-                Some(new_metric.into_absolute())
+                // For incremental metrics, return as-is to be accumulated atomically later.
+                // We don't accumulate here to avoid a race condition between reading the current
+                // value under READ lock and storing the accumulated value under WRITE lock.
+                Some(new_metric)
             }
         }
     }
@@ -572,21 +561,55 @@ impl StreamSink<Event> for PrometheusExporter {
                         normalized
                     };
 
-                    // We have a normalized metric, in absolute form.  If we're already aware of this
-                    // metric, update its expiration deadline, otherwise, start tracking it.
-                    let mut metrics = self.metrics.write().expect(LOCK_FAILED);
+                    // Handle metric storage based on kind. For incremental metrics, we must
+                    // accumulate atomically under write lock to prevent race conditions.
+                    match normalized.kind() {
+                        MetricKind::Absolute => {
+                            // Absolute metrics are already in final form, just store them
+                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
 
-                    match metrics.entry(MetricRef::from_metric(&normalized)) {
-                        Entry::Occupied(mut entry) => {
-                            let (data, metadata) = entry.get_mut();
-                            *data = normalized;
-                            metadata.refresh();
+                            match metrics.entry(MetricRef::from_metric(&normalized)) {
+                                Entry::Occupied(mut entry) => {
+                                    let (data, metadata) = entry.get_mut();
+                                    *data = normalized;
+                                    metadata.refresh();
+                                }
+                                Entry::Vacant(entry) => {
+                                    entry.insert((normalized, MetricMetadata::new(flush_period)));
+                                }
+                            }
+                            finalizers.update_status(EventStatus::Delivered);
                         }
-                        Entry::Vacant(entry) => {
-                            entry.insert((normalized, MetricMetadata::new(flush_period)));
+                        MetricKind::Incremental => {
+                            // For incremental metrics, accumulate atomically under write lock
+                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
+                            let metric_ref = MetricRef::from_metric(&normalized);
+
+                            match metrics.entry(metric_ref) {
+                                Entry::Occupied(mut entry) => {
+                                    let (existing_metric, metadata) = entry.get_mut();
+
+                                    // Atomically read current value, add increment, and store
+                                    let mut accumulated_value = existing_metric.value().clone();
+                                    if accumulated_value.add(normalized.value()) {
+                                        // Successfully accumulated - store as absolute
+                                        *existing_metric = normalized.with_value(accumulated_value).into_absolute();
+                                        metadata.refresh();
+                                        finalizers.update_status(EventStatus::Delivered);
+                                    } else {
+                                        // Incompatible metric values
+                                        emit!(PrometheusNormalizationError {});
+                                        finalizers.update_status(EventStatus::Errored);
+                                    }
+                                }
+                                Entry::Vacant(entry) => {
+                                    // First occurrence - convert to absolute and store
+                                    entry.insert((normalized.into_absolute(), MetricMetadata::new(flush_period)));
+                                    finalizers.update_status(EventStatus::Delivered);
+                                }
+                            }
                         }
                     }
-                    finalizers.update_status(EventStatus::Delivered);
                 }
                 _ => {
                     emit!(PrometheusNormalizationError {});
