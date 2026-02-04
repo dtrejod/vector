@@ -483,7 +483,11 @@ impl PrometheusExporter {
         Ok(())
     }
 
-    fn normalize(&mut self, metric: Metric) -> Option<Metric> {
+    /// Preprocesses a metric by converting distributions to the appropriate format.
+    ///
+    /// For distribution metrics, converts them to either histograms or summaries based on
+    /// configuration. Absolute and incremental metrics are returned as-is.
+    fn preprocess_metric(&mut self, metric: Metric) -> Option<Metric> {
         let new_metric = match metric.value() {
             MetricValue::Distribution { .. } => {
                 // Convert the distribution as-is, and then absolute-ify it.
@@ -553,29 +557,27 @@ impl StreamSink<Event> for PrometheusExporter {
             let mut metric = event.into_metric();
             let finalizers = metric.take_finalizers();
 
-            match self.normalize(metric) {
-                Some(normalized) => {
-                    let normalized = if self.config.suppress_timestamp {
-                        normalized.with_timestamp(None)
-                    } else {
-                        normalized
-                    };
+            match self.preprocess_metric(metric) {
+                Some(mut preprocessed_metric) => {
+                    if self.config.suppress_timestamp {
+                        preprocessed_metric = preprocessed_metric.with_timestamp(None);
+                    }
 
                     // Handle metric storage based on kind. For incremental metrics, we must
                     // accumulate atomically under write lock to prevent race conditions.
-                    match normalized.kind() {
+                    match preprocessed_metric.kind() {
                         MetricKind::Absolute => {
                             // Absolute metrics are already in final form, just store them
                             let mut metrics = self.metrics.write().expect(LOCK_FAILED);
 
-                            match metrics.entry(MetricRef::from_metric(&normalized)) {
+                            match metrics.entry(MetricRef::from_metric(&preprocessed_metric)) {
                                 Entry::Occupied(mut entry) => {
                                     let (data, metadata) = entry.get_mut();
-                                    *data = normalized;
+                                    *data = preprocessed_metric;
                                     metadata.refresh();
                                 }
                                 Entry::Vacant(entry) => {
-                                    entry.insert((normalized, MetricMetadata::new(flush_period)));
+                                    entry.insert((preprocessed_metric, MetricMetadata::new(flush_period)));
                                 }
                             }
                             finalizers.update_status(EventStatus::Delivered);
@@ -583,7 +585,7 @@ impl StreamSink<Event> for PrometheusExporter {
                         MetricKind::Incremental => {
                             // For incremental metrics, accumulate atomically under write lock
                             let mut metrics = self.metrics.write().expect(LOCK_FAILED);
-                            let metric_ref = MetricRef::from_metric(&normalized);
+                            let metric_ref = MetricRef::from_metric(&preprocessed_metric);
 
                             match metrics.entry(metric_ref) {
                                 Entry::Occupied(mut entry) => {
@@ -591,20 +593,19 @@ impl StreamSink<Event> for PrometheusExporter {
 
                                     // Atomically read current value, add increment, and store
                                     let mut accumulated_value = existing_metric.value().clone();
-                                    if accumulated_value.add(normalized.value()) {
+                                    if accumulated_value.add(preprocessed_metric.value()) {
                                         // Successfully accumulated - store as absolute
-                                        *existing_metric = normalized.with_value(accumulated_value).into_absolute();
-                                        metadata.refresh();
-                                        finalizers.update_status(EventStatus::Delivered);
+                                        *existing_metric = preprocessed_metric.with_value(accumulated_value).into_absolute();
                                     } else {
-                                        // Incompatible metric values
-                                        emit!(PrometheusNormalizationError {});
-                                        finalizers.update_status(EventStatus::Errored);
+                                        // Incompatible metric types - treat increment as absolute
+                                        *existing_metric = preprocessed_metric.into_absolute();
                                     }
+                                    metadata.refresh();
+                                    finalizers.update_status(EventStatus::Delivered);
                                 }
                                 Entry::Vacant(entry) => {
                                     // First occurrence - convert to absolute and store
-                                    entry.insert((normalized.into_absolute(), MetricMetadata::new(flush_period)));
+                                    entry.insert((preprocessed_metric.into_absolute(), MetricMetadata::new(flush_period)));
                                     finalizers.update_status(EventStatus::Delivered);
                                 }
                             }
