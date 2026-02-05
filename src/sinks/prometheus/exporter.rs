@@ -563,18 +563,17 @@ impl StreamSink<Event> for PrometheusExporter {
                         preprocessed_metric = preprocessed_metric.with_timestamp(None);
                     }
 
-                    // Handle metric storage based on kind. For incremental metrics, we must
-                    // accumulate atomically under write lock to prevent race conditions.
-                    match preprocessed_metric.kind() {
-                        MetricKind::Incremental => {
-                            // For incremental metrics, accumulate atomically under write lock
-                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
-                            let metric_ref = MetricRef::from_metric(&preprocessed_metric);
+                    // Handle metric storage. For incremental metrics, we must accumulate
+                    // atomically under write lock to prevent race conditions.
+                    let mut metrics = self.metrics.write().expect(LOCK_FAILED);
+                    let metric_ref = MetricRef::from_metric(&preprocessed_metric);
 
-                            match metrics.entry(metric_ref) {
-                                Entry::Occupied(mut entry) => {
-                                    let (existing_metric, metadata) = entry.get_mut();
+                    match metrics.entry(metric_ref) {
+                        Entry::Occupied(mut entry) => {
+                            let (existing_metric, metadata) = entry.get_mut();
 
+                            match preprocessed_metric.kind() {
+                                MetricKind::Incremental => {
                                     // Atomically read current value, add increment, and store
                                     let mut accumulated_value = existing_metric.value().clone();
                                     if accumulated_value.add(preprocessed_metric.value()) {
@@ -584,34 +583,24 @@ impl StreamSink<Event> for PrometheusExporter {
                                         // Incompatible metric types - treat increment as absolute
                                         *existing_metric = preprocessed_metric.into_absolute();
                                     }
-                                    metadata.refresh();
-                                    finalizers.update_status(EventStatus::Delivered);
                                 }
-                                Entry::Vacant(entry) => {
-                                    // Otherwise, if we didn't have an existing value or we did and it was not
-                                    // compatible with the new value, simply return the new value as absolute.
-                                    entry.insert((preprocessed_metric.into_absolute(), MetricMetadata::new(flush_period)));
-                                    finalizers.update_status(EventStatus::Delivered);
+                                _ => {
+                                    // For all other metric kinds (currently just Absolute), replace directly
+                                    *existing_metric = preprocessed_metric;
                                 }
                             }
+                            metadata.refresh();
                         }
-                        _ => {
-                            // For all other metric kinds, store as-is
-                            let mut metrics = self.metrics.write().expect(LOCK_FAILED);
-
-                            match metrics.entry(MetricRef::from_metric(&preprocessed_metric)) {
-                                Entry::Occupied(mut entry) => {
-                                    let (data, metadata) = entry.get_mut();
-                                    *data = preprocessed_metric;
-                                    metadata.refresh();
-                                }
-                                Entry::Vacant(entry) => {
-                                    entry.insert((preprocessed_metric, MetricMetadata::new(flush_period)));
-                                }
-                            }
-                            finalizers.update_status(EventStatus::Delivered);
+                        Entry::Vacant(entry) => {
+                            // First occurrence of this metric
+                            let stored_metric = match preprocessed_metric.kind() {
+                                MetricKind::Incremental => preprocessed_metric.into_absolute(),
+                                _ => preprocessed_metric,
+                            };
+                            entry.insert((stored_metric, MetricMetadata::new(flush_period)));
                         }
                     }
+                    finalizers.update_status(EventStatus::Delivered);
                 }
                 _ => {
                     emit!(PrometheusNormalizationError {});
